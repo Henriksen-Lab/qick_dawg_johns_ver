@@ -70,17 +70,17 @@ class NVAveragerProgram_johns(QickRegisterManagerMixin, QickProgram):
         if "rounds" in cfg:
             self.rounds = cfg['rounds']
         
-        
-        # Set laser power
-        ser = serial.Serial(port = "/dev/cu.usbserial-A10O10L5", 
-                    baudrate = 9600, 
-                    stopbits = 1, 
-                    bytesize=8, 
-                    parity='N', 
-                    xonxoff = True)
-        
-        ser.write(b'\r*ON\r')
-        ser.write(bytearray('PWR' + str(self.cfg.laser_power) + '\r', 'ascii'))
+        if self.cfg.usb_connect:
+            # Set laser power
+            ser = serial.Serial(port = "/dev/cu.usbserial-A10O10L5", 
+                        baudrate = 9600, 
+                        stopbits = 1, 
+                        bytesize=8, 
+                        parity='N', 
+                        xonxoff = True)
+
+            ser.write(b'\r*ON\r')
+            ser.write(bytearray('PWR' + str(self.cfg.laser_power) + '\r', 'ascii'))
 
     def initialize(self):
         """
