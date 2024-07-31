@@ -80,6 +80,7 @@ class NVAveragerProgram_johns(QickRegisterManagerMixin, QickProgram):
                         xonxoff = True)
 
             ser.write(b'\r*ON\r')
+            ser.write(b'\rLAS\r')
             ser.write(bytearray('PWR' + str(self.cfg.laser_power) + '\r', 'ascii'))
 
     def initialize(self):

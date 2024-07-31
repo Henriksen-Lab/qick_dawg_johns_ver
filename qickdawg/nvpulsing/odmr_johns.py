@@ -20,7 +20,7 @@ import pickle
 import os 
 import serial
 
-class LockinODMR_johns(NVAveragerProgram_johns):
+class ODMR_johns(NVAveragerProgram_johns):
     '''
     An NVAveragerProgram class that generates and executes ODMR measurements by
     measuring photoluminescnece intensity (PL) as a function of microwave frequency
@@ -164,53 +164,29 @@ class LockinODMR_johns(NVAveragerProgram_johns):
         The second acquisition has the microwave channel off for .cfg.readout_integration_t# and
             averages the adc values over this time
         '''
-        t = 0
-        
-        self.trigger(
-            adcs=[],
-            pins=[self.cfg.laser_gate_pmod],
-            width=self.cfg.laser_initialize_treg,
-            adc_trig_offset=0,
-            t=t)
-        
-        t += self.cfg.laser_initialize_treg
-        
-        self.trigger(
-            adcs=[self.cfg.adc_channel],
-            pins=[self.cfg.laser_gate_pmod],
-            width=self.cfg.readout_integration_treg,
-            adc_trig_offset=0,
-            t=t)
-        
-        self.pulse(ch=self.cfg.mw_channel, t=t)
 
-        self.sync_all(self.cfg.relax_delay_treg)
-        self.wait_all()
-        
-        t = 0
-        
         self.trigger(
             adcs=[],
             pins=[self.cfg.laser_gate_pmod],
-            width=self.cfg.laser_initialize_treg,
+            width=self.cfg.readout_integration_treg + self.cfg.adc_trigger_offset_treg,
             adc_trig_offset=0,
-            t=t)
-        
-        t += self.cfg.laser_initialize_treg
+            t=0)
         
         self.trigger(
             adcs=[self.cfg.adc_channel],
-            pins=[self.cfg.laser_gate_pmod],
+            pins=[],
             width=self.cfg.readout_integration_treg,
             adc_trig_offset=0,
-            t=t)
+            t=self.cfg.adc_trigger_offset_treg)
+        
+        self.pulse(ch=self.cfg.mw_channel, t=self.cfg.adc_trigger_offset_treg)
 
         self.sync_all(self.cfg.relax_delay_treg)
         self.wait_all()
 
     def acquire(self, raw_data=False, *arg, **kwarg):
 
-        data = super().acquire(reads_per_rep=2, *arg, **kwarg)
+        data = super().acquire(reads_per_rep=1, *arg, **kwarg)
 
         if raw_data is False:
             data = self.analyze_results(data)
@@ -239,31 +215,13 @@ class LockinODMR_johns(NVAveragerProgram_johns):
         data = np.reshape(data, self.data_shape)
         data = data / self.cfg.readout_integration_treg
         
-        if len(self.data_shape) == 2:
-            signal = data[:, 0]
-            reference = data[:, 1]
-        elif len(self.data_shape) == 3:
-            signal = data[:, :, 0]
-            reference = data[:, :, 1]
-        elif len(self.data_shape) == 4:
-            signal = data[:, :, :, 0]
-            reference = data[:, :, :, 1]
+        signal = data
 
-        odmr = (signal - reference)
-        odmr_contrast = (signal - reference) / reference * 100
-
-        for _ in range(len(odmr.shape) - 1):
-            odmr = np.mean(odmr, axis=0)
+        for _ in range(len(signal.shape) - 1):
             signal = np.mean(signal, axis=0)
-            reference = np.mean(reference, axis=0)
-            odmr_contrast = np.mean(odmr_contrast, axis=0)
 
         d = ItemAttribute()
-        d.odmr = odmr
         d.signal = signal
-        d.reference = reference
-        d.odmr_contrast = odmr_contrast
-
         d.frequencies = self.qick_sweeps[0].get_sweep_pts()
 
         return d
@@ -349,26 +307,15 @@ class LockinODMR_johns(NVAveragerProgram_johns):
         
         folder_path = self.init_save(self.cfg, data, folder_path, folder_name, separate_dates)
         
-        # plot the signal and reference and save it
+        # plot the signal and save it
         
         plt.plot(data.frequencies, data.signal, label='signal')
-        plt.plot(data.frequencies, data.reference, label='reference')
         plt.title('ODMR Spectrum')
         plt.ylabel('fluorescence (arb)')
         plt.xlabel('frequency (MHz)')
         plt.legend()
         
         plt.savefig(folder_path + '/ODMR_Signal_and_Reference.png')
-        plt.clf()
-        
-        # plot the odmr contrast and save it
-        
-        plt.plot(data.frequencies, -data.odmr_contrast)
-        plt.title('ODMR Spectrum')
-        plt.ylabel('contrast (%)')
-        plt.xlabel('frequency (MHz)')
-        
-        plt.savefig(folder_path + '/ODMR_Contrast.png')
         plt.clf()
         
         # save the measurment configurations in a textfile

@@ -8,7 +8,7 @@ while taking the difference between PL for microwave drive on or off
 
 
 from qick.averager_program import QickSweep
-from .nvaverageprogram import NVAveragerProgram
+from .nvaverageprogram_johns import NVAveragerProgram_johns
 from ..util import ItemAttribute
 import qickdawg as qd
 
@@ -20,7 +20,7 @@ import pickle
 import os 
 import serial
 
-class ODMR(NVAveragerProgram):
+class LockinODMR_johns(NVAveragerProgram_johns):
     '''
     An NVAveragerProgram class that generates and executes ODMR measurements by
     measuring photoluminescnece intensity (PL) as a function of microwave frequency
@@ -119,17 +119,6 @@ class ODMR(NVAveragerProgram):
                              freq=0,
                              length=self.cfg.readout_integration_treg,
                              sel="input")
-        
-        # Set laser power
-        ser = serial.Serial(port = "/dev/cu.usbserial-A10O10L5", 
-                    baudrate = 9600, 
-                    stopbits = 1, 
-                    bytesize=8, 
-                    parity='N', 
-                    xonxoff = True)
-        
-        ser.write(b'\r*ON\r')
-        ser.write(bytearray('PWR' + str(self.cfg.laser_power) + '\r', 'ascii'))
 
 
         # Get registers for mw
@@ -157,10 +146,6 @@ class ODMR(NVAveragerProgram):
                                  self.cfg.nsweep_points))
 
         self.synci(400)  # give processor some time to self.cfgure pulses
-        
-        self.wait_all(100000)
-        
-        ser.write(bytearray('PWR' + str(self.cfg.laser_power) + '\r', 'ascii'))
 
         if self.cfg.pre_init:
             self.pulse(ch=self.cfg.mw_channel)
@@ -179,22 +164,43 @@ class ODMR(NVAveragerProgram):
         The second acquisition has the microwave channel off for .cfg.readout_integration_t# and
             averages the adc values over this time
         '''
-        
+
         self.trigger(
-            adcs=[self.cfg.adc_channel],
+            adcs=[],
             pins=[self.cfg.laser_gate_pmod],
-            width=self.cfg.readout_integration_treg,
+            width=self.cfg.readout_integration_treg + self.cfg.adc_trigger_offset_treg,
             adc_trig_offset=0,
             t=0)
         
-        self.pulse(ch=self.cfg.mw_channel, t=0)
+        self.trigger(
+            adcs=[self.cfg.adc_channel],
+            pins=[],
+            width=self.cfg.readout_integration_treg,
+            adc_trig_offset=0,
+            t=self.cfg.adc_trigger_offset_treg)
+        
+        self.pulse(ch=self.cfg.mw_channel, t=self.cfg.adc_trigger_offset_treg)
+
+        self.trigger(
+            adcs=[],
+            pins=[self.cfg.laser_gate_pmod],
+            width=self.cfg.readout_integration_treg + self.cfg.adc_trigger_offset_treg,
+            adc_trig_offset=0,
+            t=self.cfg.readout_integration_treg + self.cfg.relax_delay_treg + self.cfg.adc_trigger_offset_treg)
+        
+        self.trigger(
+            adcs=[self.cfg.adc_channel],
+            pins=[],
+            width=self.cfg.readout_integration_treg,
+            adc_trig_offset=0,
+            t=self.cfg.readout_integration_treg + self.cfg.relax_delay_treg + 2*self.cfg.adc_trigger_offset_treg)
 
         self.sync_all(self.cfg.relax_delay_treg)
         self.wait_all()
 
     def acquire(self, raw_data=False, *arg, **kwarg):
 
-        data = super().acquire(reads_per_rep=1, *arg, **kwarg)
+        data = super().acquire(reads_per_rep=2, *arg, **kwarg)
 
         if raw_data is False:
             data = self.analyze_results(data)
@@ -221,13 +227,32 @@ class ODMR(NVAveragerProgram):
         """
         
         data = np.reshape(data, self.data_shape)
-        signal = data / self.cfg.readout_integration_treg
+        data = data / self.cfg.readout_integration_treg
+        
+        if len(self.data_shape) == 2:
+            signal = data[:, 0]
+            reference = data[:, 1]
+        elif len(self.data_shape) == 3:
+            signal = data[:, :, 0]
+            reference = data[:, :, 1]
+        elif len(self.data_shape) == 4:
+            signal = data[:, :, :, 0]
+            reference = data[:, :, :, 1]
 
-        for _ in range(len(signal.shape) - 1):
+        odmr = (signal - reference)
+        odmr_contrast = (signal - reference) / reference * 100
+
+        for _ in range(len(odmr.shape) - 1):
+            odmr = np.mean(odmr, axis=0)
             signal = np.mean(signal, axis=0)
+            reference = np.mean(reference, axis=0)
+            odmr_contrast = np.mean(odmr_contrast, axis=0)
 
         d = ItemAttribute()
+        d.odmr = odmr
         d.signal = signal
+        d.reference = reference
+        d.odmr_contrast = odmr_contrast
 
         d.frequencies = self.qick_sweeps[0].get_sweep_pts()
 
@@ -297,35 +322,22 @@ class ODMR(NVAveragerProgram):
         Parameters
         ----------
         data
-            The raw data to be saved. Should be the output of the anaalyze_results function
-        foldername
+            The raw data to be saved. Should be the output of the analyze_results function
+        folder_path
+            Location that the folder contaning the saved files should be (if separated dates = True this will be the location
+            of the folder of folders)
+        separated_dates
+            Boolean value which if true will create a subfolder for the day the measurment was saved. All measurments saved
+            that day will be put in the corresponding folder
+        folder_name
             The name of the file the data and plots will be saved in. If None it will be the data and time
+        additional_configs
+            A list of 2 item arrays, with the first item containing the name of the config and the second item containing the 
+            value. These will be saved alongside the values in the config item used to generate the data in a text file
         
         '''
-        if separate_dates: # separates measurments into a separate folder for each date
-            folder_path = folder_path + '/' + str(datetime.now())[:10]
         
-        if (not os.path.exists(folder_path)): # creates the folder for the current date if it doesn't exist
-            os.makedirs(folder_path)
-        
-        if (folder_name == None): # sets folder name to the time the meaurment was saved if none was given
-            if separate_dates:
-                folder_name = str(datetime.now())[10:-7]
-            else:
-                folder_name = str(datetime.now())[:-7]
-                
-        folder_path = folder_path + '/' + folder_name
-        
-        if (os.path.exists(folder_path.replace('$', '_'))): # if a file with folder_name already exists, add numbers to the end until it doesnt                
-            folder_path = folder_path + '$1'
-            n = 2
-            while (os.path.exists(folder_path.replace('$', '_'))):
-                folder_path = folder_path.split('$')[0] + '$' + str(n)
-                n += 1
-        
-        folder_path = folder_path.replace('$', '_')
-        
-        os.makedirs(folder_path) # creates the folder too save the measurments in
+        folder_path = self.init_save(self.cfg, data, folder_path, folder_name, separate_dates)
         
         # plot the signal and reference and save it
         
@@ -349,15 +361,11 @@ class ODMR(NVAveragerProgram):
         plt.savefig(folder_path + '/ODMR_Contrast.png')
         plt.clf()
         
-        # save the data object as a pickle
-        
-        pickle.dump(data, open(folder_path + '/Data.pkl', 'wb'))
-        
         # save the measurment configurations in a textfile
         
         with open(folder_path + '/Config.txt', "w") as file:
-            file.write('Readout time (us): ' + str(qd.soccfg.cycles2us(self.cfg.readout_integration_treg)) + '\n')
-            file.write('Relax time (us): ' + str(qd.soccfg.cycles2us(self.cfg.relax_delay_treg)) + '\n')
+            file.write('Readout time (us): ' + str(self.cfg.readout_integration_tus) + '\n')
+            file.write('Relax time (us): ' + str(self.cfg.relax_delay_tus) + '\n')
             file.write('Repetitions: ' + str(self.cfg.reps) + '\n')
             file.write('Laser power: ' + str(self.cfg.laser_power) + '\n')
             file.write('MW gain: ' + str(self.cfg.mw_gain) + '\n')

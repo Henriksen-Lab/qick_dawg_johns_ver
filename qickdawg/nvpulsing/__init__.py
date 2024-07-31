@@ -8,7 +8,7 @@ from .laseron import LaserOn, laser_on
 from .laseroff import LaserOff, laser_off
 from .plintensity import PLIntensity
 from .lockinodmr import LockinODMR
-from .odmr import ODMR
+from .odmr_johns import ODMR_johns
 from .readoutwindow import ReadoutWindow
 from .getreadoutwindow import get_readout_window
 

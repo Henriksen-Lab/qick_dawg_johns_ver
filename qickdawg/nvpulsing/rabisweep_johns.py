@@ -337,10 +337,9 @@ class RabiSweep_johns(NVAveragerProgram_johns):
         
         folder_path = self.init_save(self.cfg, data, folder_path, folder_name, separate_dates)
         
-        # plot the signal and reference and save it
+        # plot the signal and save it
         
         plt.plot(data.sweep_tus, data.signal, label='signal')
-        plt.plot(data.sweep_tus, data.reference, label='reference')
 
         plt.legend()
         plt.title('Rabi Oscillations')
